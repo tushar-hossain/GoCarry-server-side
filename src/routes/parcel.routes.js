@@ -40,6 +40,45 @@ router.get("/", async (req, res) => {
   }
 });
 
+// Get Single Parcel
+router.get("/:id", async (req, res) => {
+  try {
+    const { id } = req.params;
+
+    if (!ObjectId.isValid(id)) {
+      return res.status(400).send({
+        success: false,
+        message: "Invalid parcel ID",
+      });
+    }
+
+    const parcel = await parcelCollection().findOne({
+      _id: new ObjectId(id),
+    });
+
+    if (!parcel) {
+      return res.status(404).send({
+        success: false,
+        message: "Parcel not found",
+      });
+    }
+
+    res.status(200).send({
+      success: true,
+      message: "Parcel retrieved successfully",
+      data: parcel,
+    });
+  } catch (error) {
+    console.error("Get single parcel error:", error);
+
+    res.status(500).send({
+      success: false,
+      message: "Failed to retrieve parcel",
+      error: error.message,
+    });
+  }
+});
+
 // POST parcel
 router.post("/", async (req, res) => {
   try {
