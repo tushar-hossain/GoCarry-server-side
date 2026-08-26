@@ -3,6 +3,7 @@ const express = require("express");
 const cors = require("cors");
 const { connectDB } = require("./config/db");
 const parcelRoutes = require("./routes/parcel.routes");
+const paymentRoutes = require("./routes/payment.routes");
 
 const app = express();
 const PORT = process.env.PORT || 5000;
@@ -16,6 +17,7 @@ app.get("/", (req, res) => {
 
 // Routes
 app.use("/parcels", parcelRoutes);
+app.use("/payments", paymentRoutes);
 
 const startServer = async () => {
   try {
