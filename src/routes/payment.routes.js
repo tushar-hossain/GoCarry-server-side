@@ -2,6 +2,8 @@ const express = require("express");
 const Stripe = require("stripe");
 const router = express.Router();
 const stripe = new Stripe(process.env.STRIPE_SECRET_KEY);
+const { getDB } = require("../config/db");
+const { ObjectId } = require("mongodb");
 
 // Create PaymentIntent
 router.post("/create-payment-intent", async (req, res) => {
@@ -28,8 +30,6 @@ router.post("/create-payment-intent", async (req, res) => {
       clientSecret: paymentIntent.client_secret,
     });
   } catch (error) {
-    console.error("Create payment intent error:", error);
-
     res.status(500).send({
       success: false,
       message: "Failed to create payment intent",
@@ -38,23 +38,49 @@ router.post("/create-payment-intent", async (req, res) => {
   }
 });
 
-// Save Payment
+// save payment and status changes parcel
 router.post("/save-payment", async (req, res) => {
   try {
-    const { paymentIntentId, parcelId, amount, currency, created_by, status } =
-      req.body;
+    const {
+      paymentIntentId,
+      parcelId,
+      status,
+      currency = "usd",
+      user,
+    } = req.body;
 
-    if (!paymentIntentId || !parcelId || !amount || !created_by || !status) {
+    if (!paymentIntentId || !parcelId || !status) {
       return res.status(400).send({
         success: false,
-        message: "Required payment information is missing",
+        message: "paymentIntentId, parcelId and status are required",
       });
     }
 
     const db = getDB();
+    const parcelCollection = db.collection("parcels");
     const paymentCollection = db.collection("payments");
 
-    // Check if payment already exists
+    // Validate parcel ID
+    if (!ObjectId.isValid(parcelId)) {
+      return res.status(400).send({
+        success: false,
+        message: "Invalid parcel ID",
+      });
+    }
+
+    // Find parcel
+    const parcel = await parcelCollection.findOne({
+      _id: new ObjectId(parcelId),
+    });
+
+    if (!parcel) {
+      return res.status(404).send({
+        success: false,
+        message: "Parcel not found",
+      });
+    }
+
+    // Check duplicate payment
     const existingPayment = await paymentCollection.findOne({
       paymentIntentId,
     });
@@ -66,30 +92,64 @@ router.post("/save-payment", async (req, res) => {
       });
     }
 
+    // Generate tracking ID if parcel doesn't have one
+    let trackingId = parcel.trackingId;
+
+    if (!trackingId) {
+      const randomCode = Math.random()
+        .toString(36)
+        .substring(2, 8)
+        .toUpperCase();
+
+      const date = new Date().toISOString().slice(0, 10).replace(/-/g, "");
+
+      trackingId = `GC-${date}-${randomCode}`;
+    }
+
+    // Save payment
     const payment = {
       paymentIntentId,
-      parcelId,
-      amount,
-      currency: currency || "usd",
-      created_by,
+      parcelId: parcel._id,
+      amount: parcel.deliveryCost,
+      currency,
+      created_by: parcel.created_by,
+      user,
       paymentStatus: status,
-      payment_date: null,
-      createdAt: new Date(),
-      updatedAt: new Date(),
+      payment_date: status === "succeeded" ? new Date().toISOString() : null,
+      createdAt: new Date().toISOString(),
+      updatedAt: new Date().toISOString(),
     };
 
-    const result = await paymentCollection.insertOne(payment);
+    const paymentResult = await paymentCollection.insertOne(payment);
+
+    // Update parcel
+    const parcelUpdate = {
+      paymentStatus: status,
+      trackingId,
+      updatedAt: new Date().toISOString(),
+    };
+
+    await parcelCollection.updateOne(
+      {
+        _id: new ObjectId(parcelId),
+      },
+      {
+        $set: parcelUpdate,
+      },
+    );
 
     res.status(201).send({
       success: true,
-      message: "Payment information saved successfully",
+      message: "Payment saved and parcel updated successfully",
+
       data: {
-        insertedId: result.insertedId,
+        paymentId: paymentResult.insertedId,
+        parcelId: parcel._id,
+        trackingId,
+        paymentStatus: status,
       },
     });
   } catch (error) {
-    console.error("Save payment error:", error);
-
     res.status(500).send({
       success: false,
       message: "Failed to save payment",
@@ -98,174 +158,32 @@ router.post("/save-payment", async (req, res) => {
   }
 });
 
-// Update Payment Status
-router.patch("/update-payment/:paymentIntentId", async (req, res) => {
-  try {
-    const { paymentIntentId } = req.params;
-    const { paymentStatus } = req.body;
-
-    const allowedStatuses = [
-      "pending",
-      "processing",
-      "succeeded",
-      "failed",
-      "canceled",
-    ];
-
-    if (!allowedStatuses?.includes(paymentStatus)) {
-      return res.status(400).send({
-        success: false,
-        message: "Invalid payment status",
-      });
-    }
-
-    const db = getDB();
-    const paymentCollection = db.collection("payments");
-
-    const updateData = {
-      paymentStatus,
-      updatedAt: new Date(),
-    };
-
-    // Store payment date when payment succeeds
-    if (paymentStatus === "succeeded") {
-      updateData.payment_date = new Date();
-    }
-
-    const result = await paymentCollection.updateOne(
-      { paymentIntentId },
-      {
-        $set: updateData,
-      },
-    );
-
-    if (result.matchedCount === 0) {
-      return res.status(404).send({
-        success: false,
-        message: "Payment not found",
-      });
-    }
-
-    res.status(200).send({
-      success: true,
-      message: "Payment status updated successfully",
-    });
-  } catch (error) {
-    console.error("Update payment error:", error);
-
-    res.status(500).send({
-      success: false,
-      message: "Failed to update payment status",
-      error: error.message,
-    });
-  }
-});
-
-// User Payment History
-router.get("/history", async (req, res) => {
+// get user email or admin get all data
+router.get("/", async (req, res) => {
   try {
     const { email } = req.query;
 
-    if (!email) {
-      return res.status(400).send({
-        success: false,
-        message: "Email is required",
-      });
-    }
+    const query = email
+      ? {
+          created_by: email,
+        }
+      : {};
 
     const db = getDB();
-    const paymentCollection = db.collection("payments");
-
-    const payments = await paymentCollection
-      .find({
-        created_by: email,
-      })
-      .sort({
-        _id: -1,
-      })
+    const parcelCollection = db.collection("parcels");
+    const parcels = await parcelCollection
+      .find(query)
+      .sort({ _id: -1 })
       .toArray();
 
     res.status(200).send({
       success: true,
-      message: "Payment history retrieved successfully",
-      data: payments,
+      data: parcels,
     });
   } catch (error) {
-    console.error("Get payment history error:", error);
-
     res.status(500).send({
       success: false,
-      message: "Failed to retrieve payment history",
-      error: error.message,
-    });
-  }
-});
-
-// Admin - All Payment History
-router.get("/admin/history", async (req, res) => {
-  try {
-    const db = getDB();
-    const paymentCollection = db.collection("payments");
-
-    const payments = await paymentCollection
-      .find({})
-      .sort({
-        _id: -1,
-      })
-      .toArray();
-
-    res.status(200).send({
-      success: true,
-      message: "All payment history retrieved successfully",
-      data: payments,
-    });
-  } catch (error) {
-    console.error("Get admin payment history error:", error);
-
-    res.status(500).send({
-      success: false,
-      message: "Failed to retrieve payment history",
-      error: error.message,
-    });
-  }
-});
-
-// Get Single Payment
-router.get("/:id", async (req, res) => {
-  try {
-    const { id } = req.params;
-
-    if (!ObjectId.isValid(id)) {
-      return res.status(400).send({
-        success: false,
-        message: "Invalid payment ID",
-      });
-    }
-
-    const db = getDB();
-    const paymentCollection = db.collection("payments");
-
-    const payment = await paymentCollection.findOne({
-      _id: new ObjectId(id),
-    });
-
-    if (!payment) {
-      return res.status(404).send({
-        success: false,
-        message: "Payment not found",
-      });
-    }
-
-    res.status(200).send({
-      success: true,
-      data: payment,
-    });
-  } catch (error) {
-    console.error("Get payment error:", error);
-
-    res.status(500).send({
-      success: false,
-      message: "Failed to retrieve payment",
+      message: "Failed to retrieve parcels",
       error: error.message,
     });
   }
