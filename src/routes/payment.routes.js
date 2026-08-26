@@ -170,20 +170,20 @@ router.get("/", async (req, res) => {
       : {};
 
     const db = getDB();
-    const parcelCollection = db.collection("parcels");
-    const parcels = await parcelCollection
+    const paymentsCollection = db.collection("payments");
+    const payments = await paymentsCollection
       .find(query)
       .sort({ _id: -1 })
       .toArray();
 
     res.status(200).send({
       success: true,
-      data: parcels,
+      data: payments,
     });
   } catch (error) {
     res.status(500).send({
       success: false,
-      message: "Failed to retrieve parcels",
+      message: "Failed to retrieve payments",
       error: error.message,
     });
   }
