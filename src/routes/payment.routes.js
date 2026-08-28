@@ -4,6 +4,7 @@ const router = express.Router();
 const stripe = new Stripe(process.env.STRIPE_SECRET_KEY);
 const { getDB } = require("../config/db");
 const { ObjectId } = require("mongodb");
+const verifyFBToken = require("../middleware/verifyFBToken");
 
 // Create PaymentIntent
 router.post("/create-payment-intent", async (req, res) => {
@@ -159,7 +160,7 @@ router.post("/save-payment", async (req, res) => {
 });
 
 // get user email or admin get all data
-router.get("/", async (req, res) => {
+router.get("/", verifyFBToken, async (req, res) => {
   try {
     const { email } = req.query;
 
