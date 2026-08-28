@@ -1,6 +1,7 @@
 const express = require("express");
 const { ObjectId } = require("mongodb");
 const { getDB } = require("../config/db");
+const verifyFBToken = require("../middleware/verifyFBToken");
 
 const router = express.Router();
 
@@ -9,7 +10,7 @@ const parcelCollection = () => {
 };
 
 // GET all parcels
-router.get("/", async (req, res) => {
+router.get("/", verifyFBToken, async (req, res) => {
   try {
     const { email } = req.query;
 
@@ -41,7 +42,7 @@ router.get("/", async (req, res) => {
 });
 
 // Get Single Parcel
-router.get("/:id", async (req, res) => {
+router.get("/:id", verifyFBToken, async (req, res) => {
   try {
     const { id } = req.params;
 
@@ -102,7 +103,7 @@ router.post("/", async (req, res) => {
 });
 
 // DELETE parcel
-router.delete("/:id", async (req, res) => {
+router.delete("/:id", verifyFBToken, async (req, res) => {
   try {
     const { id } = req.params;
 

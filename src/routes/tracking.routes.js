@@ -1,6 +1,7 @@
 const express = require("express");
 const { ObjectId } = require("mongodb");
 const { getDB } = require("../config/db");
+const verifyFBToken = require("../middleware/verifyFBToken");
 const router = express.Router();
 
 const trackingCollection = () => {
@@ -74,7 +75,7 @@ router.post("/", async (req, res) => {
 });
 
 // Get tracking history
-router.get("/:trackingId", async (req, res) => {
+router.get("/:trackingId", verifyFBToken, async (req, res) => {
   try {
     const { trackingId } = req.params;
 
