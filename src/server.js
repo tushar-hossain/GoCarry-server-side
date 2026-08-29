@@ -6,6 +6,7 @@ const parcelRoutes = require("./routes/parcel.routes");
 const paymentRoutes = require("./routes/payment.routes");
 const trackingRoutes = require("./routes/tracking.routes");
 const userRoutes = require("./routes/user.routes");
+const userRiders = require("./routes/rider.routes");
 
 const app = express();
 const PORT = process.env.PORT || 5000;
@@ -22,6 +23,7 @@ app.use("/parcels", parcelRoutes);
 app.use("/payments", paymentRoutes);
 app.use("/tracking", trackingRoutes);
 app.use("/users", userRoutes);
+app.use("/riders", userRiders);
 
 const startServer = async () => {
   try {
