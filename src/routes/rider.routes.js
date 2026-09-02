@@ -1,10 +1,16 @@
 const express = require("express");
 const { getDB } = require("../config/db");
 const verifyFBToken = require("../middleware/verifyFBToken");
+const verifyAdmin = require("../middleware/verifyAdmin");
+const { ObjectId } = require("mongodb");
 const router = express.Router();
 
 const riderCollection = () => {
   return getDB().collection("riders");
+};
+
+const usersCollection = () => {
+  return getDB().collection("users");
 };
 
 // POST riders
@@ -92,6 +98,100 @@ router.post("/", verifyFBToken, async (req, res) => {
     res.status(500).send({
       success: false,
       message: "Failed to submit rider application",
+      error: error.message,
+    });
+  }
+});
+
+// Admin: Update Rider Status
+router.patch("/status/:id", verifyFBToken, verifyAdmin, async (req, res) => {
+  try {
+    const { id } = req.params;
+    const { status } = req.body;
+    const riders = riderCollection();
+    const users = usersCollection();
+
+    const allowedStatuses = ["pending", "approved", "rejected"];
+
+    if (!ObjectId.isValid(id)) {
+      return res.status(400).send({
+        success: false,
+        message: "Invalid rider ID",
+      });
+    }
+
+    if (!allowedStatuses?.includes(status)) {
+      return res.status(400).send({
+        success: false,
+        message: "Invalid rider status",
+      });
+    }
+
+    // Find rider
+    const rider = await riders.findOne({
+      _id: new ObjectId(id),
+    });
+
+    if (!rider) {
+      return res.status(404).send({
+        success: false,
+        message: "Rider application not found",
+      });
+    }
+
+    const now = new Date().toISOString();
+
+    await riders.updateOne(
+      {
+        _id: new ObjectId(id),
+      },
+      {
+        $set: {
+          status,
+          updatedAt: now,
+        },
+      },
+    );
+
+    let userRole = "user";
+
+    if (status === "approved") {
+      userRole = "rider";
+    }
+
+    if (status === "rejected") {
+      userRole = "user";
+    }
+
+    await users.updateOne(
+      {
+        uid: rider.uid,
+      },
+      {
+        $set: {
+          role: userRole,
+          updatedAt: now,
+        },
+      },
+    );
+
+    // Get updated rider
+    const updatedRider = await riders.findOne({
+      _id: new ObjectId(id),
+    });
+
+    res.status(200).send({
+      success: true,
+      message: `Rider ${status} successfully`,
+      data: {
+        rider: updatedRider,
+        role: userRole,
+      },
+    });
+  } catch (error) {
+    res.status(500).send({
+      success: false,
+      message: "Failed to update rider status",
       error: error.message,
     });
   }
