@@ -23,8 +23,6 @@ const verifyAdmin = async (req, res, next) => {
 
     next();
   } catch (error) {
-    console.error("Admin verification error:", error);
-
     res.status(500).send({
       success: false,
       message: "Failed to verify admin",

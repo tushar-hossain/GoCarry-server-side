@@ -86,6 +86,13 @@ router.get("/:trackingId", verifyFBToken, async (req, res) => {
       });
     }
 
+    if (!req.user.uid) {
+      return res.status(403).send({
+        success: false,
+        message: "Forbidden access.",
+      });
+    }
+
     const trackingUpdates = await trackingCollection()
       .find({
         trackingId,

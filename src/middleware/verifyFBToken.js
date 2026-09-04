@@ -24,8 +24,6 @@ const verifyFBToken = async (req, res, next) => {
 
     next();
   } catch (error) {
-    console.error("Firebase token verification error:", error);
-
     return res.status(401).send({
       success: false,
       message: "Unauthorized access",

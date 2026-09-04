@@ -19,7 +19,14 @@ router.patch(
   async (req, res) => {
     try {
       const { id } = req.params;
-      console.log(id);
+
+      if (!req.dbUser.uid && req.dbUser.role !== "admin") {
+        return res.status(403).send({
+          success: false,
+          message: "Forbidden. you can only promote youeself to admin.",
+        });
+      }
+
       if (!ObjectId.isValid(id)) {
         return res.status(400).send({
           success: false,
@@ -73,6 +80,13 @@ router.patch(
         return res.status(400).send({
           success: false,
           message: "Invalid user ID",
+        });
+      }
+
+      if (!req.dbUser.uid && req.dbUser.role !== "admin") {
+        return res.status(403).send({
+          success: false,
+          message: "Forbidden. you can only promote youeself to admin.",
         });
       }
 
