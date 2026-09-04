@@ -170,6 +170,13 @@ router.get("/", verifyFBToken, async (req, res) => {
         }
       : {};
 
+    if (!req.user.uid) {
+      return res.status(403).send({
+        success: false,
+        message: "Forbidden access.",
+      });
+    }
+
     const db = getDB();
     const paymentsCollection = db.collection("payments");
     const payments = await paymentsCollection

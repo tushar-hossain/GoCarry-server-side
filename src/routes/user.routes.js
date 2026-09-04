@@ -14,6 +14,13 @@ router.get("/", verifyFBToken, async (req, res) => {
     const collection = userCollection();
     const users = await collection.find({}).sort({ _id: -1 }).toArray();
 
+    if (!req.user.uid) {
+      return res.status(403).send({
+        success: false,
+        message: "Forbidden access.",
+      });
+    }
+
     res.status(200).send({
       success: true,
       message: "Users retrieved successfully",
@@ -37,6 +44,13 @@ router.get("/:email", verifyFBToken, async (req, res) => {
       return res.status(400).send({
         success: false,
         message: "Email is required",
+      });
+    }
+
+    if (!req.user.uid) {
+      return res.status(403).send({
+        success: false,
+        message: "Forbidden access.",
       });
     }
 

@@ -20,6 +20,13 @@ router.get("/", verifyFBToken, async (req, res) => {
         }
       : {};
 
+    if (!req.user.uid) {
+      return res.status(403).send({
+        success: false,
+        message: "Forbidden access.",
+      });
+    }
+
     const parcels = await parcelCollection()
       .find(query)
       .sort({ _id: -1 })
@@ -50,6 +57,13 @@ router.get("/:id", verifyFBToken, async (req, res) => {
       return res.status(400).send({
         success: false,
         message: "Invalid parcel ID",
+      });
+    }
+
+    if (!req.user.uid) {
+      return res.status(403).send({
+        success: false,
+        message: "Forbidden access.",
       });
     }
 
@@ -106,6 +120,13 @@ router.post("/", async (req, res) => {
 router.delete("/:id", verifyFBToken, async (req, res) => {
   try {
     const { id } = req.params;
+
+    if (!req.user.uid) {
+      return res.status(403).send({
+        success: false,
+        message: "Forbidden access.",
+      });
+    }
 
     const result = await parcelCollection().deleteOne({
       _id: new ObjectId(id),

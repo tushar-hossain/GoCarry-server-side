@@ -33,6 +33,13 @@ router.post("/", verifyFBToken, async (req, res) => {
     const uid = req.user.uid;
     const userEmail = req.user.email ?? email;
 
+    if (!req.user.uid) {
+      return res.status(403).send({
+        success: false,
+        message: "Forbidden access.",
+      });
+    }
+
     // Required fields
     if (
       !name ||
@@ -110,6 +117,13 @@ router.patch("/status/:id", verifyFBToken, verifyAdmin, async (req, res) => {
     const { status } = req.body;
     const riders = riderCollection();
     const users = usersCollection();
+
+    if (!req.dbUser.uid && req.dbUser.role !== "admin") {
+      return res.status(403).send({
+        success: false,
+        message: "Forbidden. you can only promote youeself to admin.",
+      });
+    }
 
     const allowedStatuses = ["pending", "approved", "rejected"];
 
@@ -204,6 +218,13 @@ router.get("/", verifyFBToken, async (req, res) => {
     const collection = riderCollection();
     const riders = await collection.find({}).sort({ _id: -1 }).toArray();
 
+    if (!req.user.uid) {
+      return res.status(403).send({
+        success: false,
+        message: "Forbidden access.",
+      });
+    }
+
     res.status(200).send({
       success: true,
       message: "Riders retrieved successfully",
@@ -231,6 +252,13 @@ router.get("/:email", verifyFBToken, async (req, res) => {
       return res.status(404).send({
         success: false,
         message: "Rider not found",
+      });
+    }
+
+    if (!req.user.uid) {
+      return res.status(403).send({
+        success: false,
+        message: "Forbidden access.",
       });
     }
 
