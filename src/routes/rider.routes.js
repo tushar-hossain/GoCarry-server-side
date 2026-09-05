@@ -13,6 +13,10 @@ const usersCollection = () => {
   return getDB().collection("users");
 };
 
+const parcelCollection = () => {
+  return getDB().collection("parcels");
+};
+
 // POST riders
 router.post("/", verifyFBToken, async (req, res) => {
   try {
@@ -125,8 +129,6 @@ router.patch("/status/:id", verifyFBToken, verifyAdmin, async (req, res) => {
       });
     }
 
-    const allowedStatuses = ["pending", "approved", "rejected"];
-
     if (!ObjectId.isValid(id)) {
       return res.status(400).send({
         success: false,
@@ -134,10 +136,12 @@ router.patch("/status/:id", verifyFBToken, verifyAdmin, async (req, res) => {
       });
     }
 
-    if (!allowedStatuses?.includes(status)) {
+    const allowedStatuses = ["pending", "approved", "rejected"];
+
+    if (!allowedStatuses.includes(status)) {
       return res.status(400).send({
         success: false,
-        message: "Invalid rider status",
+        message: "Invalid status. Allowed values: pending, approved, rejected",
       });
     }
 
@@ -155,7 +159,7 @@ router.patch("/status/:id", verifyFBToken, verifyAdmin, async (req, res) => {
 
     const now = new Date().toISOString();
 
-    await riders.updateOne(
+    const riderResult = await riders.updateOne(
       {
         _id: new ObjectId(id),
       },
@@ -167,17 +171,28 @@ router.patch("/status/:id", verifyFBToken, verifyAdmin, async (req, res) => {
       },
     );
 
+    if (riderResult.matchedCount === 0) {
+      return res.status(404).send({
+        success: false,
+        message: "Rider status could not be updated",
+      });
+    }
+
     let userRole = "user";
 
     if (status === "approved") {
       userRole = "rider";
     }
 
+    if (status === "pending") {
+      userRole = "user";
+    }
+
     if (status === "rejected") {
       userRole = "user";
     }
 
-    await users.updateOne(
+    const userResult = await users.updateOne(
       {
         uid: rider.uid,
       },
@@ -189,9 +204,20 @@ router.patch("/status/:id", verifyFBToken, verifyAdmin, async (req, res) => {
       },
     );
 
+    if (userResult.matchedCount === 0) {
+      return res.status(404).send({
+        success: false,
+        message: "Rider status updated, but corresponding user was not found",
+      });
+    }
+
     // Get updated rider
     const updatedRider = await riders.findOne({
       _id: new ObjectId(id),
+    });
+
+    const updatedUser = await users.findOne({
+      uid: rider.uid,
     });
 
     res.status(200).send({
@@ -199,7 +225,7 @@ router.patch("/status/:id", verifyFBToken, verifyAdmin, async (req, res) => {
       message: `Rider ${status} successfully`,
       data: {
         rider: updatedRider,
-        role: userRole,
+        user: updatedUser,
       },
     });
   } catch (error) {
@@ -238,6 +264,173 @@ router.get("/", verifyFBToken, async (req, res) => {
     });
   }
 });
+
+// Available Riders width district filter
+router.get("/available", verifyFBToken, verifyAdmin, async (req, res) => {
+  try {
+    const { district } = req.query;
+    const riders = riderCollection();
+
+    if (!req.dbUser.uid && req.dbUser.role !== "admin") {
+      return res.status(403).send({
+        success: false,
+        message: "Forbidden. you can only promote youeself to admin.",
+      });
+    }
+
+    const result = await riders
+      .find({ district: district })
+      .sort({ appliedAt: -1 })
+      .toArray();
+
+    res.status(200).send({
+      success: true,
+      data: result,
+    });
+  } catch (error) {
+    res.status(500).send({
+      success: false,
+      message: "Failed to fetch riders",
+      error: error.message,
+    });
+  }
+});
+
+// assign rides
+router.patch(
+  "/assign-rider/:parcelId",
+  verifyFBToken,
+  verifyAdmin,
+  async (req, res) => {
+    try {
+      const { parcelId } = req.params;
+      const { riderId } = req.body;
+
+      if (!ObjectId.isValid(parcelId) || !ObjectId.isValid(riderId)) {
+        return res.status(400).send({
+          success: false,
+          message: "Invalid parcel or rider ID",
+        });
+      }
+
+      if (!req.dbUser.uid && req.dbUser.role !== "admin") {
+        return res.status(403).send({
+          success: false,
+          message: "Forbidden. you can only promote youeself to admin.",
+        });
+      }
+
+      const parcels = parcelCollection();
+      const riders = riderCollection();
+
+      // Find parcel
+      const parcel = await parcels.findOne({
+        _id: new ObjectId(parcelId),
+      });
+
+      if (!parcel) {
+        return res.status(404).send({
+          success: false,
+          message: "Parcel not found",
+        });
+      }
+
+      // Find rider
+      const rider = await riders.findOne({
+        _id: new ObjectId(riderId),
+      });
+
+      if (!rider) {
+        return res.status(404).send({
+          success: false,
+          message: "Rider not found",
+        });
+      }
+
+      // Check rider approval
+      if (rider.status !== "approved") {
+        return res.status(400).send({
+          success: false,
+          message: "Only approved riders can be assigned",
+        });
+      }
+
+      // Check parcel status
+      if (parcel.delivery_Status !== "not_collected") {
+        return res.status(400).send({
+          success: false,
+          message: "This parcel cannot be assigned",
+        });
+      }
+
+      // Check rider availability
+      if (rider.workStatus === "in-delivery") {
+        return res.status(400).send({
+          success: false,
+          message: "This rider is already assigned to a delivery",
+        });
+      }
+
+      const now = new Date().toISOString();
+
+      // Update parcel
+      await parcels.updateOne(
+        {
+          _id: new ObjectId(parcelId),
+        },
+        {
+          $set: {
+            delivery_Status: "in-transit",
+            assignedRiderId: rider._id.toString(),
+            assignedRiderUid: rider.uid,
+            assignedRiderName: rider.name,
+            assignedRiderEmail: rider.email,
+            assignedAt: now,
+            updatedAt: now,
+          },
+        },
+      );
+
+      // Update rider
+      await riders.updateOne(
+        {
+          _id: new ObjectId(riderId),
+        },
+        {
+          $set: {
+            workStatus: "in-delivery",
+            updatedAt: now,
+          },
+        },
+      );
+
+      // Get updated parcel
+      const updatedParcel = await parcels.findOne({
+        _id: new ObjectId(parcelId),
+      });
+
+      // Get updated rider
+      const updatedRider = await riders.findOne({
+        _id: new ObjectId(riderId),
+      });
+
+      res.status(200).send({
+        success: true,
+        message: "Rider assigned successfully",
+        data: {
+          parcel: updatedParcel,
+          rider: updatedRider,
+        },
+      });
+    } catch (error) {
+      res.status(500).send({
+        success: false,
+        message: "Failed to assign rider",
+        error: error.message,
+      });
+    }
+  },
+);
 
 // Get Rider By Email
 router.get("/:email", verifyFBToken, async (req, res) => {
