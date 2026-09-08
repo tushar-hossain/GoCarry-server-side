@@ -380,7 +380,7 @@ router.patch(
         },
         {
           $set: {
-            delivery_Status: "in-transit",
+            delivery_Status: "assign_rider",
             assignedRiderId: rider._id.toString(),
             assignedRiderUid: rider.uid,
             assignedRiderName: rider.name,
@@ -431,6 +431,179 @@ router.patch(
     }
   },
 );
+
+// GET rider delivery tasks
+router.get("/delivery-tasks", verifyFBToken, async (req, res) => {
+  try {
+    const riderEmail = req.user.email;
+
+    if (!riderEmail) {
+      return res.status(401).send({
+        success: false,
+        message: "Rider email not found",
+      });
+    }
+
+    if (!req.user.uid) {
+      return res.status(403).send({
+        success: false,
+        message: "Forbidden access.",
+      });
+    }
+
+    const tasks = await parcelCollection()
+      .find({
+        assignedRiderEmail: riderEmail,
+        delivery_Status: {
+          $in: ["assign_rider", "in-transit"],
+        },
+      })
+      .sort({ assignedAt: -1 })
+      .toArray();
+
+    res.status(200).send({
+      success: true,
+      message: "Rider delivery tasks retrieved successfully",
+      data: tasks,
+    });
+  } catch (error) {
+    res.status(500).send({
+      success: false,
+      message: "Failed to retrieve delivery tasks",
+      error: error.message,
+    });
+  }
+});
+
+// Update rider delivery tasks status
+router.patch("/delivery-tasks/status/:id", verifyFBToken, async (req, res) => {
+  try {
+    const { id } = req.params;
+    const { status } = req.body;
+    const riderEmail = req.user.email;
+    const allowedStatuses = ["in-transit", "delivered"];
+
+    if (!allowedStatuses.includes(status)) {
+      return res.status(400).send({
+        success: false,
+        message: "Invalid delivery status",
+      });
+    }
+
+    if (!ObjectId.isValid(id)) {
+      return res.status(400).send({
+        success: false,
+        message: "Invalid parcel ID",
+      });
+    }
+
+    if (!req.user.uid) {
+      return res.status(403).send({
+        success: false,
+        message: "Forbidden access.",
+      });
+    }
+
+    const parcel = await parcelCollection().findOne({
+      _id: new ObjectId(id),
+    });
+
+    if (!parcel) {
+      return res.status(404).send({
+        success: false,
+        message: "Parcel not found",
+      });
+    }
+
+    // parcel belongs to the logged-in rider
+    if (parcel.assignedRiderEmail !== riderEmail) {
+      return res.status(403).send({
+        success: false,
+        message: "You are not assigned to this parcel",
+      });
+    }
+
+    // Make sure the status transition is valid
+    if (status === "in-transit" && parcel.delivery_Status !== "assign_rider") {
+      return res.status(400).send({
+        success: false,
+        message: "Only an assigned parcel can be marked as picked up",
+      });
+    }
+
+    if (status === "delivered" && parcel.delivery_Status !== "in-transit") {
+      return res.status(400).send({
+        success: false,
+        message: "Only an in-transit parcel can be marked as delivered",
+      });
+    }
+
+    const now = new Date().toISOString();
+
+    const result = await parcelCollection().updateOne(
+      {
+        _id: new ObjectId(id),
+        assignedRiderEmail: riderEmail,
+      },
+      {
+        $set: {
+          delivery_Status: status,
+          updatedAt: now,
+        },
+      },
+    );
+
+    if (result.modifiedCount === 0) {
+      return res.status(400).send({
+        success: false,
+        message: "Parcel status was not updated",
+      });
+    }
+
+    if (status === "delivered") {
+      const activeDeliveries = await parcelCollection().countDocuments({
+        assignedRiderEmail: riderEmail,
+        delivery_Status: {
+          $in: ["assign_rider", "in-transit"],
+        },
+      });
+
+      // No more active deliveries
+      if (activeDeliveries === 0) {
+        await riderCollection().updateOne(
+          { email: riderEmail },
+          {
+            $set: {
+              workStatus: "available",
+              updatedAt: now,
+            },
+          },
+        );
+      }
+    }
+
+    const updatedParcel = await parcelCollection().findOne({
+      _id: new ObjectId(id),
+    });
+
+    res.status(200).send({
+      success: true,
+      message:
+        status === "in-transit"
+          ? "Parcel picked up successfully"
+          : "Parcel delivered successfully",
+      data: updatedParcel,
+    });
+  } catch (error) {
+    console.error("Update delivery status error:", error);
+
+    res.status(500).send({
+      success: false,
+      message: "Failed to update delivery status",
+      error: error.message,
+    });
+  }
+});
 
 // Get Rider By Email
 router.get("/:email", verifyFBToken, async (req, res) => {
