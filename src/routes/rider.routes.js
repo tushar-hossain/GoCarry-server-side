@@ -3,6 +3,7 @@ const { getDB } = require("../config/db");
 const verifyFBToken = require("../middleware/verifyFBToken");
 const verifyAdmin = require("../middleware/verifyAdmin");
 const { ObjectId } = require("mongodb");
+const verifyRider = require("../middleware/verifyRider");
 const router = express.Router();
 
 const riderCollection = () => {
@@ -15,6 +16,10 @@ const usersCollection = () => {
 
 const parcelCollection = () => {
   return getDB().collection("parcels");
+};
+
+const cashoutCollection = () => {
+  return getDB().collection("cashouts");
 };
 
 // POST riders
@@ -433,7 +438,7 @@ router.patch(
 );
 
 // GET rider delivery tasks
-router.get("/delivery-tasks", verifyFBToken, async (req, res) => {
+router.get("/delivery-tasks", verifyFBToken, verifyRider, async (req, res) => {
   try {
     const riderEmail = req.user.email;
 
@@ -444,10 +449,10 @@ router.get("/delivery-tasks", verifyFBToken, async (req, res) => {
       });
     }
 
-    if (!req.user.uid) {
+    if (!req.dbUser.uid && req.dbUser.role !== "rider") {
       return res.status(403).send({
         success: false,
-        message: "Forbidden access.",
+        message: "Forbidden. you can only promote youeself to rider.",
       });
     }
 
@@ -476,134 +481,474 @@ router.get("/delivery-tasks", verifyFBToken, async (req, res) => {
 });
 
 // Update rider delivery tasks status
-router.patch("/delivery-tasks/status/:id", verifyFBToken, async (req, res) => {
-  try {
-    const { id } = req.params;
-    const { status } = req.body;
-    const riderEmail = req.user.email;
-    const allowedStatuses = ["in-transit", "delivered"];
+router.patch(
+  "/delivery-tasks/status/:id",
+  verifyFBToken,
+  verifyRider,
+  async (req, res) => {
+    try {
+      const { id } = req.params;
+      const { status } = req.body;
+      const riderEmail = req.user.email;
+      const allowedStatuses = ["in-transit", "delivered"];
 
-    if (!allowedStatuses.includes(status)) {
-      return res.status(400).send({
+      if (!allowedStatuses.includes(status)) {
+        return res.status(400).send({
+          success: false,
+          message: "Invalid delivery status",
+        });
+      }
+
+      if (!ObjectId.isValid(id)) {
+        return res.status(400).send({
+          success: false,
+          message: "Invalid parcel ID",
+        });
+      }
+
+      if (!req.user.uid) {
+        return res.status(403).send({
+          success: false,
+          message: "Forbidden access.",
+        });
+      }
+
+      if (!req.dbUser.uid && req.dbUser.role !== "rider") {
+        return res.status(403).send({
+          success: false,
+          message: "Forbidden. you can only promote youeself to rider.",
+        });
+      }
+
+      const parcel = await parcelCollection().findOne({
+        _id: new ObjectId(id),
+      });
+
+      if (!parcel) {
+        return res.status(404).send({
+          success: false,
+          message: "Parcel not found",
+        });
+      }
+
+      // parcel belongs to the logged-in rider
+      if (parcel.assignedRiderEmail !== riderEmail) {
+        return res.status(403).send({
+          success: false,
+          message: "You are not assigned to this parcel",
+        });
+      }
+
+      // Make sure the status transition is valid
+      if (
+        status === "in-transit" &&
+        parcel.delivery_Status !== "assign_rider"
+      ) {
+        return res.status(400).send({
+          success: false,
+          message: "Only an assigned parcel can be marked as picked up",
+        });
+      }
+
+      if (status === "delivered" && parcel.delivery_Status !== "in-transit") {
+        return res.status(400).send({
+          success: false,
+          message: "Only an in-transit parcel can be marked as delivered",
+        });
+      }
+
+      const now = new Date().toISOString();
+
+      const result = await parcelCollection().updateOne(
+        {
+          _id: new ObjectId(id),
+          assignedRiderEmail: riderEmail,
+        },
+        {
+          $set: {
+            delivery_Status: status,
+            updatedAt: now,
+          },
+        },
+      );
+
+      if (result.modifiedCount === 0) {
+        return res.status(400).send({
+          success: false,
+          message: "Parcel status was not updated",
+        });
+      }
+
+      if (status === "delivered") {
+        const activeDeliveries = await parcelCollection().countDocuments({
+          assignedRiderEmail: riderEmail,
+          delivery_Status: {
+            $in: ["assign_rider", "in-transit"],
+          },
+        });
+
+        // No more active deliveries
+        if (activeDeliveries === 0) {
+          await riderCollection().updateOne(
+            { email: riderEmail },
+            {
+              $set: {
+                workStatus: "available",
+                updatedAt: now,
+              },
+            },
+          );
+        }
+      }
+
+      const updatedParcel = await parcelCollection().findOne({
+        _id: new ObjectId(id),
+      });
+
+      res.status(200).send({
+        success: true,
+        message:
+          status === "in-transit"
+            ? "Parcel picked up successfully"
+            : "Parcel delivered successfully",
+        data: updatedParcel,
+      });
+    } catch (error) {
+      console.error("Update delivery status error:", error);
+
+      res.status(500).send({
         success: false,
-        message: "Invalid delivery status",
+        message: "Failed to update delivery status",
+        error: error.message,
+      });
+    }
+  },
+);
+
+// get completed parcel deliveries rider
+router.get(
+  "/delivery-tasks/completed",
+  verifyFBToken,
+  verifyRider,
+  async (req, res) => {
+    try {
+      const riderEmail = req.user.email;
+
+      if (!req.dbUser.uid && req.dbUser.role !== "rider") {
+        return res.status(403).send({
+          success: false,
+          message: "Forbidden. you can only promote youeself to rider.",
+        });
+      }
+
+      const completedParcels = await parcelCollection()
+        .find({
+          assignedRiderEmail: riderEmail,
+          delivery_Status: {
+            $in: ["delivered", "service_center_delivered"],
+          },
+        })
+        .sort({ updatedAt: -1 })
+        .toArray();
+
+      const completedParcelsWithCashout = await Promise.all(
+        completedParcels?.map(async (parcel) => {
+          const cashout = await cashoutCollection().findOne({
+            parcelId: parcel._id.toString(),
+            riderEmail,
+          });
+
+          return {
+            ...parcel,
+            cashout: cashout
+              ? {
+                  id: cashout._id,
+                  status: cashout.cashoutStatus,
+                  amount: cashout.amount,
+                  percentage: cashout.percentage,
+                  requestedAt: cashout.requestedAt,
+                  processedAt: cashout.processedAt,
+                }
+              : null,
+          };
+        }),
+      );
+
+      res.status(200).send({
+        success: true,
+        message: "Completed deliveries retrieved successfully",
+        data: completedParcelsWithCashout,
+      });
+    } catch (error) {
+      res.status(500).send({
+        success: false,
+        message: "Failed to retrieve completed deliveries",
+        error: error.message,
+      });
+    }
+  },
+);
+
+// get all cashout requests admin
+router.get("/cashouts", verifyFBToken, verifyAdmin, async (req, res) => {
+  try {
+    if (!req.dbUser.uid && req.dbUser.role !== "admin") {
+      return res.status(403).send({
+        success: false,
+        message: "Forbidden. you can only promote youeself to rider.",
       });
     }
 
-    if (!ObjectId.isValid(id)) {
+    const cashouts = await cashoutCollection()
+      .find({})
+      .sort({ requestedAt: -1 })
+      .toArray();
+
+    res.status(200).send({
+      success: true,
+      message: "Cashout history retrieved successfully",
+      data: cashouts,
+    });
+  } catch (error) {
+    console.error("Cashout history error:", error);
+
+    res.status(500).send({
+      success: false,
+      message: "Failed to retrieve cashout history",
+      error: error.message,
+    });
+  }
+});
+
+// post rider cashout api
+router.post("/cashouts", verifyFBToken, async (req, res) => {
+  try {
+    const riderEmail = req.user.email;
+    const { parcelId } = req.body;
+
+    // Validate parcel ID
+    if (!parcelId) {
+      return res.status(400).send({
+        success: false,
+        message: "Parcel ID is required",
+      });
+    }
+
+    if (!ObjectId.isValid(parcelId)) {
       return res.status(400).send({
         success: false,
         message: "Invalid parcel ID",
       });
     }
 
-    if (!req.user.uid) {
-      return res.status(403).send({
-        success: false,
-        message: "Forbidden access.",
-      });
-    }
-
+    // Find completed parcel
     const parcel = await parcelCollection().findOne({
-      _id: new ObjectId(id),
+      _id: new ObjectId(parcelId),
+      assignedRiderEmail: riderEmail,
+      delivery_Status: {
+        $in: ["delivered", "service_center_delivered"],
+      },
     });
 
     if (!parcel) {
       return res.status(404).send({
         success: false,
-        message: "Parcel not found",
+        message:
+          "Completed parcel not found or this parcel is not assigned to you",
       });
     }
 
-    // parcel belongs to the logged-in rider
-    if (parcel.assignedRiderEmail !== riderEmail) {
-      return res.status(403).send({
+    // Check duplicate cashout
+    const existingCashout = await cashoutCollection().findOne({
+      parcelId: parcel._id.toString(),
+      riderEmail: riderEmail,
+    });
+
+    if (existingCashout) {
+      return res.status(409).send({
         success: false,
-        message: "You are not assigned to this parcel",
+        message: "Cashout has already been requested for this parcel",
+        data: {
+          cashoutStatus: existingCashout.cashoutStatus,
+        },
       });
     }
 
-    // Make sure the status transition is valid
-    if (status === "in-transit" && parcel.delivery_Status !== "assign_rider") {
+    // Delivery cost
+    const deliveryCost = Number(parcel.deliveryCost || 0);
+
+    if (deliveryCost <= 0) {
       return res.status(400).send({
         success: false,
-        message: "Only an assigned parcel can be marked as picked up",
+        message: "Invalid delivery cost for this parcel",
       });
     }
 
-    if (status === "delivered" && parcel.delivery_Status !== "in-transit") {
-      return res.status(400).send({
-        success: false,
-        message: "Only an in-transit parcel can be marked as delivered",
-      });
-    }
+    // Compare service centers
+    const senderCenter = String(parcel.senderServiceCenter || "")
+      .trim()
+      .toLowerCase();
 
+    const receiverCenter = String(parcel.receiverServiceCenter || "")
+      .trim()
+      .toLowerCase();
+
+    const sameServiceCenter =
+      senderCenter && receiverCenter && senderCenter === receiverCenter;
+
+    // Calculate rider earning
+    const percentage = sameServiceCenter ? 80 : 30;
+    const cashoutAmount = (deliveryCost * percentage) / 100;
+
+    // Create cashout
     const now = new Date().toISOString();
 
-    const result = await parcelCollection().updateOne(
-      {
-        _id: new ObjectId(id),
-        assignedRiderEmail: riderEmail,
-      },
-      {
-        $set: {
-          delivery_Status: status,
-          updatedAt: now,
-        },
-      },
-    );
+    const cashoutData = {
+      parcelId: parcel._id.toString(),
+      trackingId: parcel.trackingId,
+      riderId: parcel.assignedRiderId || null,
+      riderUid: parcel.assignedRiderUid || null,
+      riderEmail: riderEmail,
+      riderName: parcel.assignedRiderName || null,
+      deliveryCost: deliveryCost,
+      senderServiceCenter: parcel.senderServiceCenter || null,
+      receiverServiceCenter: parcel.receiverServiceCenter || null,
+      serviceCenterType: sameServiceCenter
+        ? "same_service_center"
+        : "different_service_center",
+      percentage: percentage,
+      amount: cashoutAmount,
+      cashoutStatus: "pending",
+      requestedAt: now,
+      processedAt: null,
+      adminNote: null,
+    };
 
-    if (result.modifiedCount === 0) {
-      return res.status(400).send({
-        success: false,
-        message: "Parcel status was not updated",
-      });
-    }
+    const result = await cashoutCollection().insertOne(cashoutData);
 
-    if (status === "delivered") {
-      const activeDeliveries = await parcelCollection().countDocuments({
-        assignedRiderEmail: riderEmail,
-        delivery_Status: {
-          $in: ["assign_rider", "in-transit"],
-        },
-      });
-
-      // No more active deliveries
-      if (activeDeliveries === 0) {
-        await riderCollection().updateOne(
-          { email: riderEmail },
-          {
-            $set: {
-              workStatus: "available",
-              updatedAt: now,
-            },
-          },
-        );
-      }
-    }
-
-    const updatedParcel = await parcelCollection().findOne({
-      _id: new ObjectId(id),
-    });
-
-    res.status(200).send({
+    res.status(201).send({
       success: true,
-      message:
-        status === "in-transit"
-          ? "Parcel picked up successfully"
-          : "Parcel delivered successfully",
-      data: updatedParcel,
+      message: "Cashout request submitted successfully",
+
+      data: {
+        cashoutId: result.insertedId,
+        parcelId: parcel._id,
+        trackingId: parcel.trackingId,
+        deliveryCost: deliveryCost,
+        percentage: percentage,
+        amount: cashoutAmount,
+        cashoutStatus: "pending",
+      },
     });
   } catch (error) {
-    console.error("Update delivery status error:", error);
-
     res.status(500).send({
       success: false,
-      message: "Failed to update delivery status",
-      error: error.message,
+      message: "Failed to create cashout request",
     });
   }
 });
+
+// cashouts history api
+router.get("/cashouts-history", verifyFBToken, async (req, res) => {
+  try {
+    const riderEmail = req.user.email;
+    const cashouts = await cashoutCollection()
+      .find({
+        riderEmail: riderEmail,
+      })
+      .sort({
+        requestedAt: -1,
+      })
+      .toArray();
+
+    res.status(200).send({
+      success: true,
+      message: "Cashout history retrieved successfully",
+      data: cashouts,
+    });
+  } catch (error) {
+    res.status(500).send({
+      success: false,
+      message: "Failed to retrieve cashout history",
+    });
+  }
+});
+
+router.patch(
+  "/cashouts/:id/status",
+  verifyFBToken,
+  verifyAdmin,
+  async (req, res) => {
+    try {
+      const { id } = req.params;
+      const { status } = req.body;
+
+      const allowedStatuses = ["pending", "approved", "paid", "rejected"];
+
+      if (!ObjectId.isValid(id)) {
+        return res.status(400).send({
+          success: false,
+          message: "Invalid cashout ID",
+        });
+      }
+
+      if (!allowedStatuses.includes(status)) {
+        return res.status(400).send({
+          success: false,
+          message: "Invalid cashout status",
+        });
+      }
+
+      const cashout = await cashoutCollection().findOne({
+        _id: new ObjectId(id),
+      });
+
+      if (!cashout) {
+        return res.status(404).send({
+          success: false,
+          message: "Cashout not found",
+        });
+      }
+
+      const now = new Date().toISOString();
+
+      const updateData = {
+        cashoutStatus: status,
+        updatedAt: now,
+      };
+
+      if (status === "paid") {
+        updateData.processedAt = now;
+      }
+
+      await cashoutCollection().updateOne(
+        {
+          _id: new ObjectId(id),
+        },
+        {
+          $set: updateData,
+        },
+      );
+
+      const updatedCashout = await cashoutCollection().findOne({
+        _id: new ObjectId(id),
+      });
+
+      res.status(200).send({
+        success: true,
+        message: `Cashout ${status} successfully`,
+        data: updatedCashout,
+      });
+    } catch (error) {
+      console.error("Cashout status update error:", error);
+
+      res.status(500).send({
+        success: false,
+        message: "Failed to update cashout status",
+      });
+    }
+  },
+);
 
 // Get Rider By Email
 router.get("/:email", verifyFBToken, async (req, res) => {
