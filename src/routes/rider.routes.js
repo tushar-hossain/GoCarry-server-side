@@ -734,6 +734,13 @@ router.post("/cashouts", verifyFBToken, async (req, res) => {
       });
     }
 
+    if (!req.user.uid) {
+      return res.status(403).send({
+        success: false,
+        message: "Forbidden access.",
+      });
+    }
+
     if (!ObjectId.isValid(parcelId)) {
       return res.status(400).send({
         success: false,
@@ -821,7 +828,6 @@ router.post("/cashouts", verifyFBToken, async (req, res) => {
       cashoutStatus: "pending",
       requestedAt: now,
       processedAt: null,
-      adminNote: null,
     };
 
     const result = await cashoutCollection().insertOne(cashoutData);
@@ -852,6 +858,21 @@ router.post("/cashouts", verifyFBToken, async (req, res) => {
 router.get("/cashouts-history", verifyFBToken, async (req, res) => {
   try {
     const riderEmail = req.user.email;
+
+    if (!riderEmail) {
+      return res.status(403).send({
+        success: false,
+        message: "Forbidden access.",
+      });
+    }
+
+    if (!req.user.uid) {
+      return res.status(403).send({
+        success: false,
+        message: "Forbidden access.",
+      });
+    }
+
     const cashouts = await cashoutCollection()
       .find({
         riderEmail: riderEmail,
@@ -896,6 +917,13 @@ router.patch(
         return res.status(400).send({
           success: false,
           message: "Invalid cashout status",
+        });
+      }
+
+      if (!req.dbUser.uid && req.dbUser.role !== "admin") {
+        return res.status(403).send({
+          success: false,
+          message: "Forbidden. you can only promote youeself to admin.",
         });
       }
 
@@ -954,6 +982,21 @@ router.patch(
 router.get("/:email", verifyFBToken, async (req, res) => {
   try {
     const { email } = req.params;
+
+    if (!email) {
+      return res.status(403).send({
+        status: false,
+        message: "Rider email not found!.",
+      });
+    }
+
+    if (!req.user.uid) {
+      return res.status(403).send({
+        success: false,
+        message: "Forbidden access.",
+      });
+    }
+
     const collection = riderCollection();
     const rider = await collection.findOne({
       email,
@@ -963,13 +1006,6 @@ router.get("/:email", verifyFBToken, async (req, res) => {
       return res.status(404).send({
         success: false,
         message: "Rider not found",
-      });
-    }
-
-    if (!req.user.uid) {
-      return res.status(403).send({
-        success: false,
-        message: "Forbidden access.",
       });
     }
 
