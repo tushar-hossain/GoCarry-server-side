@@ -558,6 +558,17 @@ router.patch(
       }
 
       const now = new Date().toISOString();
+      const updatedDoc = {
+        delivery_Status: status,
+      };
+
+      if (status === "in-transit") {
+        updatedDoc.pickedAt = now;
+      }
+
+      if (status === "delivered") {
+        updatedDoc.deliveredAt = now;
+      }
 
       const result = await parcelCollection().updateOne(
         {
@@ -565,10 +576,7 @@ router.patch(
           assignedRiderEmail: riderEmail,
         },
         {
-          $set: {
-            delivery_Status: status,
-            updatedAt: now,
-          },
+          $set: updatedDoc,
         },
       );
 
@@ -891,6 +899,48 @@ router.get("/cashouts-history", verifyFBToken, async (req, res) => {
     res.status(500).send({
       success: false,
       message: "Failed to retrieve cashout history",
+    });
+  }
+});
+
+// rider earnings API
+router.get("/earnings", verifyFBToken, verifyRider, async (req, res) => {
+  try {
+    const riderEmail = req.user.email;
+
+    const cashouts = await cashoutCollection()
+      .find({ riderEmail })
+      .sort({ requestedAt: -1 })
+      .toArray();
+
+    const pendingAmount = cashouts
+      ?.filter((item) => item.cashoutStatus === "pending")
+      ?.reduce((total, item) => total + Number(item.amount || 0), 0);
+
+    const paidAmount = cashouts
+      ?.filter((item) => item.cashoutStatus === "paid")
+      ?.reduce((total, item) => total + Number(item.amount || 0), 0);
+
+    const approvedAmount = cashouts
+      ?.filter((item) => item.cashoutStatus === "approved")
+      ?.reduce((total, item) => total + Number(item.amount || 0), 0);
+
+    res.status(200).send({
+      success: true,
+      data: {
+        pendingAmount,
+        approvedAmount,
+        paidAmount,
+        totalEarnings: pendingAmount + approvedAmount + paidAmount,
+        cashouts,
+      },
+    });
+  } catch (error) {
+    console.error("Rider earnings error:", error);
+
+    res.status(500).send({
+      success: false,
+      message: "Failed to retrieve rider earnings",
     });
   }
 });
