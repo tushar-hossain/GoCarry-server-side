@@ -12,68 +12,6 @@ const parcelCollection = () => {
   return getDB().collection("parcels");
 };
 
-// Add tracking update
-router.post("/", async (req, res) => {
-  try {
-    const { parcelId, trackingId, status, title, description, location } =
-      req.body;
-
-    if (!parcelId || !trackingId || !status || !title) {
-      return res.status(400).send({
-        success: false,
-        message: "Required tracking information is missing",
-      });
-    }
-
-    if (!ObjectId.isValid(parcelId)) {
-      return res.status(400).send({
-        success: false,
-        message: "Invalid parcel ID",
-      });
-    }
-
-    // Check parcel
-    const parcel = await parcelCollection().findOne({
-      _id: new ObjectId(parcelId),
-    });
-
-    if (!parcel) {
-      return res.status(404).send({
-        success: false,
-        message: "Parcel not found",
-      });
-    }
-
-    const trackingData = {
-      parcelId: new ObjectId(parcelId),
-      trackingId,
-      status,
-      title,
-      description: description || "",
-      location: location || null,
-      createdAt: new Date().toISOString(),
-    };
-
-    const result = await trackingCollection().insertOne(trackingData);
-
-    res.status(201).send({
-      success: true,
-      message: "Tracking update added successfully",
-      data: {
-        insertedId: result.insertedId,
-      },
-    });
-  } catch (error) {
-    console.error("Create tracking error:", error);
-
-    res.status(500).send({
-      success: false,
-      message: "Failed to add tracking update",
-      error: error.message,
-    });
-  }
-});
-
 // Get tracking history
 router.get("/:trackingId", verifyFBToken, async (req, res) => {
   try {
@@ -86,33 +24,58 @@ router.get("/:trackingId", verifyFBToken, async (req, res) => {
       });
     }
 
-    if (!req.user.uid) {
-      return res.status(403).send({
-        success: false,
-        message: "Forbidden access.",
-      });
-    }
+    const parcel = await parcelCollection().findOne(
+      { trackingId },
+      {
+        projection: {
+          _id: 1,
+          trackingId: 1,
+          parcelName: 1,
+          parcelType: 1,
+          senderDistrict: 1,
+          senderServiceCenter: 1,
+          receiverDistrict: 1,
+          receiverServiceCenter: 1,
+          delivery_Status: 1,
+          paymentStatus: 1,
+          createdAt: 1,
+          creation_date: 1,
+          updatedAt: 1,
+        },
+      },
+    );
 
-    const trackingUpdates = await trackingCollection()
-      .find({
-        trackingId,
-      })
-      .sort({
-        createdAt: 1,
-      })
-      .toArray();
-
-    if (trackingUpdates?.length === 0) {
+    if (!parcel) {
       return res.status(404).send({
         success: false,
-        message: "Tracking information not found",
+        message: "Parcel not found",
       });
     }
+
+    const trackingEvents = await trackingCollection()
+      .find({ trackingId })
+      .sort({ createdAt: 1 })
+      .toArray();
 
     res.status(200).send({
       success: true,
       message: "Tracking information retrieved successfully",
-      data: trackingUpdates,
+      data: {
+        parcel: {
+          trackingId: parcel.trackingId,
+          parcelName: parcel.parcelName,
+          parcelType: parcel.parcelType,
+          senderDistrict: parcel.senderDistrict,
+          senderServiceCenter: parcel.senderServiceCenter,
+          receiverDistrict: parcel.receiverDistrict,
+          receiverServiceCenter: parcel.receiverServiceCenter,
+          delivery_Status: parcel.delivery_Status,
+          paymentStatus: parcel.paymentStatus,
+          createdAt: parcel.createdAt || parcel.creation_date,
+          updatedAt: parcel.updatedAt,
+        },
+        tracking: trackingEvents,
+      },
     });
   } catch (error) {
     console.error("Get tracking error:", error);
@@ -120,7 +83,77 @@ router.get("/:trackingId", verifyFBToken, async (req, res) => {
     res.status(500).send({
       success: false,
       message: "Failed to retrieve tracking information",
-      error: error.message,
+    });
+  }
+});
+
+// Add tracking update
+router.post("/", verifyFBToken, async (req, res) => {
+  try {
+    const { parcelId, trackingId, status, title, description, location } =
+      req.body;
+
+    if (!parcelId || !trackingId || !status || !title) {
+      return res.status(400).send({
+        success: false,
+        message: "parcelId, trackingId, status and title are required",
+      });
+    }
+
+    const allowedStatuses = [
+      "parcel_submitted",
+      "payment_completed",
+      "rider_assigned",
+      "picked_up",
+      "delivered",
+    ];
+
+    if (!allowedStatuses.includes(status)) {
+      return res.status(400).send({
+        success: false,
+        message: "Invalid tracking status",
+      });
+    }
+
+    // Check parcel exists
+    const parcel = await parcelCollection().findOne({
+      _id: new ObjectId(parcelId),
+    });
+
+    if (!parcel) {
+      return res.status(404).send({
+        success: false,
+        message: "Parcel not found",
+      });
+    }
+
+    const trackingData = {
+      parcelId: parcel._id.toString(),
+      trackingId: parcel.trackingId,
+      status,
+      title,
+      description: description || "",
+      location: location || null,
+      createdAt: new Date().toISOString(),
+      createdBy: req.user?.email || "system",
+    };
+
+    const result = await trackingCollection().insertOne(trackingData);
+
+    res.status(201).send({
+      success: true,
+      message: "Tracking event created successfully",
+      data: {
+        _id: result.insertedId,
+        ...trackingData,
+      },
+    });
+  } catch (error) {
+    console.error("Create tracking error:", error);
+
+    res.status(500).send({
+      success: false,
+      message: "Failed to create tracking event",
     });
   }
 });

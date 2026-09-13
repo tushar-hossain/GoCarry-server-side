@@ -6,6 +6,8 @@ const { getDB } = require("../config/db");
 const { ObjectId } = require("mongodb");
 const verifyFBToken = require("../middleware/verifyFBToken");
 
+const trackingCollection = () => getDB().collection("tracking");
+
 // Create PaymentIntent
 router.post("/create-payment-intent", async (req, res) => {
   try {
@@ -40,7 +42,7 @@ router.post("/create-payment-intent", async (req, res) => {
 });
 
 // save payment and status changes parcel
-router.post("/save-payment", async (req, res) => {
+router.post("/save-payment", verifyFBToken, async (req, res) => {
   try {
     const {
       paymentIntentId,
@@ -138,6 +140,18 @@ router.post("/save-payment", async (req, res) => {
         $set: parcelUpdate,
       },
     );
+
+    //
+    await trackingCollection().insertOne({
+      parcelId: parcel._id.toString(),
+      trackingId: parcel.trackingId,
+      status: "payment_completed",
+      title: "Payment Completed",
+      description: "Payment has been completed successfully.",
+      location: null,
+      createdAt: new Date().toISOString(),
+      createdBy: req.user.email,
+    });
 
     res.status(201).send({
       success: true,

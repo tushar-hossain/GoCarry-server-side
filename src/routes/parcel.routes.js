@@ -9,6 +9,8 @@ const parcelCollection = () => {
   return getDB().collection("parcels");
 };
 
+const trackingCollection = () => getDB().collection("tracking");
+
 // GET all parcels
 router.get("/", verifyFBToken, async (req, res) => {
   try {
@@ -95,10 +97,24 @@ router.get("/:id", verifyFBToken, async (req, res) => {
 });
 
 // POST parcel
-router.post("/", async (req, res) => {
+router.post("/", verifyFBToken, async (req, res) => {
   try {
     const parcelData = req.body;
     const result = await parcelCollection().insertOne(parcelData);
+
+    await trackingCollection().insertOne({
+      parcelId: result.insertedId.toString(),
+      trackingId: parcelData.trackingId,
+      status: "parcel_submitted",
+      title: "Parcel Submitted",
+      description: "Your parcel has been submitted successfully.",
+      location: {
+        district: parcelData.senderDistrict,
+        serviceCenter: parcelData.senderServiceCenter,
+      },
+      createdAt: new Date().toISOString(),
+      createdBy: req.user.email,
+    });
 
     res.status(201).send({
       success: true,
@@ -106,8 +122,6 @@ router.post("/", async (req, res) => {
       result,
     });
   } catch (error) {
-    console.error("Create parcel error:", error);
-
     res.status(500).send({
       success: false,
       message: "Failed to create parcel",

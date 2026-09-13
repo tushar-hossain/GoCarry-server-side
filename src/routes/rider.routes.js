@@ -22,6 +22,8 @@ const cashoutCollection = () => {
   return getDB().collection("cashouts");
 };
 
+const trackingCollection = () => getDB().collection("tracking");
+
 // POST riders
 router.post("/", verifyFBToken, async (req, res) => {
   try {
@@ -409,6 +411,21 @@ router.patch(
         },
       );
 
+      // Create tracking event
+      await trackingCollection().insertOne({
+        parcelId: parcel._id.toString(),
+        trackingId: parcel.trackingId,
+        status: "rider_assigned",
+        title: "Rider Assigned",
+        description: `Rider ${rider.name} has been assigned to your parcel.`,
+        location: {
+          district: parcel.senderDistrict,
+          serviceCenter: parcel.senderServiceCenter,
+        },
+        createdAt: now,
+        createdBy: req.user.email,
+      });
+
       // Get updated parcel
       const updatedParcel = await parcels.findOne({
         _id: new ObjectId(parcelId),
@@ -584,6 +601,39 @@ router.patch(
         return res.status(400).send({
           success: false,
           message: "Parcel status was not updated",
+        });
+      }
+
+      // Create tracking event
+      if (status === "in-transit") {
+        await trackingCollection().insertOne({
+          parcelId: parcel._id.toString(),
+          trackingId: parcel.trackingId,
+          status: "picked_up",
+          title: "Parcel Picked Up",
+          description: "The rider has picked up the parcel from the sender.",
+          location: {
+            district: parcel.senderDistrict,
+            serviceCenter: parcel.senderServiceCenter,
+          },
+          createdAt: now,
+          createdBy: riderEmail,
+        });
+      }
+
+      if (status === "delivered") {
+        await trackingCollection().insertOne({
+          parcelId: parcel._id.toString(),
+          trackingId: parcel.trackingId,
+          status: "delivered",
+          title: "Parcel Delivered",
+          description: "The parcel has been delivered successfully.",
+          location: {
+            district: parcel.receiverDistrict,
+            serviceCenter: parcel.receiverServiceCenter,
+          },
+          createdAt: now,
+          createdBy: riderEmail,
         });
       }
 
