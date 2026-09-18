@@ -4,6 +4,7 @@ const verifyFBToken = require("../middleware/verifyFBToken");
 const verifyAdmin = require("../middleware/verifyAdmin");
 const { ObjectId } = require("mongodb");
 const verifyRider = require("../middleware/verifyRider");
+const { createNotification } = require("../utils/createNotification");
 const router = express.Router();
 
 const riderCollection = () => {
@@ -370,14 +371,6 @@ router.patch(
         });
       }
 
-      // Check rider availability
-      if (rider.workStatus === "in-delivery") {
-        return res.status(400).send({
-          success: false,
-          message: "This rider is already assigned to a delivery",
-        });
-      }
-
       const now = new Date().toISOString();
 
       // Update parcel
@@ -434,6 +427,42 @@ router.patch(
       // Get updated rider
       const updatedRider = await riders.findOne({
         _id: new ObjectId(riderId),
+      });
+
+      // assign riders create notification
+      const admins = await usersCollection()
+        .find({ role: "admin" })
+        .project({
+          uid: 1,
+          email: 1,
+        })
+        .toArray();
+
+      await Promise.all(
+        admins.map((admin) =>
+          createNotification({
+            recipientUid: admin.uid,
+            recipientEmail: admin.email,
+            type: "rider",
+            event: "rider_assigned",
+            title: "Rider Assigned",
+            message: `Rider ${rider.name} has been assigned to parcel ${parcel.trackingId}.`,
+            parcelId: parcel._id,
+            trackingId: parcel.trackingId,
+          }),
+        ),
+      );
+
+      // Notify assigned rider
+      await createNotification({
+        recipientUid: rider.uid,
+        recipientEmail: rider.email,
+        type: "rider",
+        event: "rider_assigned",
+        title: "New Delivery Assigned",
+        message: `You have been assigned a new parcel ${parcel.trackingId}.`,
+        parcelId: parcel._id,
+        trackingId: parcel.trackingId,
       });
 
       res.status(200).send({
@@ -507,7 +536,11 @@ router.patch(
       const { id } = req.params;
       const { status } = req.body;
       const riderEmail = req.user.email;
-      const allowedStatuses = ["in-transit", "delivered"];
+      const allowedStatuses = [
+        "in-transit",
+        "delivered",
+        "service_center_delivered",
+      ];
 
       if (!allowedStatuses.includes(status)) {
         return res.status(400).send({
@@ -567,10 +600,13 @@ router.patch(
         });
       }
 
-      if (status === "delivered" && parcel.delivery_Status !== "in-transit") {
+      if (
+        ["delivered", "service_center_delivered"].includes(status) &&
+        parcel.delivery_Status !== "in-transit"
+      ) {
         return res.status(400).send({
           success: false,
-          message: "Only an in-transit parcel can be marked as delivered",
+          message: "Only an in-transit parcel can be completed",
         });
       }
 
@@ -583,8 +619,67 @@ router.patch(
         updatedDoc.pickedAt = now;
       }
 
-      if (status === "delivered") {
-        updatedDoc.deliveredAt = now;
+      // create notification riders picked up and delivered then create users notification
+      const parcelOwner = await usersCollection().findOne({
+        email: parcel.created_by,
+      });
+
+      if (["delivered", "service_center_delivered"].includes(status)) {
+        const isServiceCenterDelivery = status === "service_center_delivered";
+
+        await trackingCollection().insertOne({
+          parcelId: parcel._id.toString(),
+          trackingId: parcel.trackingId,
+          status,
+          title: isServiceCenterDelivery
+            ? "Parcel Delivered to Service Center"
+            : "Parcel Delivered",
+          description: isServiceCenterDelivery
+            ? "The parcel has been delivered to the receiver's service center."
+            : "The parcel has been delivered successfully.",
+          location: {
+            district: parcel.receiverDistrict,
+            serviceCenter: parcel.receiverServiceCenter,
+          },
+          createdAt: now,
+          createdBy: riderEmail,
+        });
+
+        // User notification
+        await createNotification({
+          recipientUid: parcelOwner.uid,
+          recipientEmail: parcelOwner.email,
+          type: "delivery",
+          event: isServiceCenterDelivery
+            ? "parcel_service_center_delivered"
+            : "parcel_delivered",
+          title: isServiceCenterDelivery
+            ? "Parcel Delivered to Service Center"
+            : "Parcel Delivered",
+          message: isServiceCenterDelivery
+            ? `Your parcel ${parcel.trackingId} has been delivered to the receiver's service center.`
+            : `Your parcel ${parcel.trackingId} has been delivered successfully.`,
+          parcelId: parcel._id,
+          trackingId: parcel.trackingId,
+        });
+
+        // Rider notification
+        await createNotification({
+          recipientUid: req.user.uid,
+          recipientEmail: req.user.email,
+          type: "delivery",
+          event: isServiceCenterDelivery
+            ? "parcel_service_center_delivered"
+            : "parcel_delivered",
+          title: isServiceCenterDelivery
+            ? "Parcel Delivered to Service Center"
+            : "Parcel Delivered",
+          message: isServiceCenterDelivery
+            ? `Parcel ${parcel.trackingId} has been delivered to the receiver's service center.`
+            : `Parcel ${parcel.trackingId} has been delivered successfully.`,
+          parcelId: parcel._id,
+          trackingId: parcel.trackingId,
+        });
       }
 
       const result = await parcelCollection().updateOne(
@@ -619,25 +714,32 @@ router.patch(
           createdAt: now,
           createdBy: riderEmail,
         });
-      }
 
-      if (status === "delivered") {
-        await trackingCollection().insertOne({
-          parcelId: parcel._id.toString(),
+        await createNotification({
+          recipientUid: parcelOwner.uid,
+          recipientEmail: parcelOwner.email,
+          type: "delivery",
+          event: "parcel_picked_up",
+          title: "Parcel Picked Up",
+          message: `Your parcel ${parcel.trackingId} has been picked up by the rider.`,
+          parcelId: parcel._id,
           trackingId: parcel.trackingId,
-          status: "delivered",
-          title: "Parcel Delivered",
-          description: "The parcel has been delivered successfully.",
-          location: {
-            district: parcel.receiverDistrict,
-            serviceCenter: parcel.receiverServiceCenter,
-          },
-          createdAt: now,
-          createdBy: riderEmail,
+        });
+
+        // create notification riders picked up and now in transit
+        await createNotification({
+          recipientUid: req.user.uid,
+          recipientEmail: req.user.email,
+          type: "delivery",
+          event: "parcel_picked_up",
+          title: "Parcel Picked Up",
+          message: `You have successfully picked up parcel ${parcel.trackingId}.`,
+          parcelId: parcel._id,
+          trackingId: parcel.trackingId,
         });
       }
 
-      if (status === "delivered") {
+      if (["delivered", "service_center_delivered"].includes(status)) {
         const activeDeliveries = await parcelCollection().countDocuments({
           assignedRiderEmail: riderEmail,
           delivery_Status: {
@@ -692,7 +794,7 @@ router.get(
     try {
       const riderEmail = req.user.email;
 
-      if (!req.dbUser.uid && req.dbUser.role !== "rider") {
+      if (!req.dbUser?.uid || req.dbUser?.role !== "rider") {
         return res.status(403).send({
           success: false,
           message: "Forbidden. you can only promote youeself to rider.",
