@@ -2,6 +2,7 @@ const express = require("express");
 const { ObjectId } = require("mongodb");
 const { getDB } = require("../config/db");
 const verifyFBToken = require("../middleware/verifyFBToken");
+const { createNotification } = require("../utils/createNotification");
 
 const router = express.Router();
 
@@ -114,6 +115,17 @@ router.post("/", verifyFBToken, async (req, res) => {
       },
       createdAt: new Date().toISOString(),
       createdBy: req.user.email,
+    });
+
+    await createNotification({
+      recipientUid: req.user.uid,
+      recipientEmail: req.user.email,
+      type: "parcel",
+      event: "parcel_created",
+      title: "Parcel Created",
+      message: `Your parcel ${parcelData.parcelName} has been successfully created.`,
+      parcelId: result.insertedId,
+      trackingId: parcelData.trackingId,
     });
 
     res.status(201).send({

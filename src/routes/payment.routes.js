@@ -5,6 +5,7 @@ const stripe = new Stripe(process.env.STRIPE_SECRET_KEY);
 const { getDB } = require("../config/db");
 const { ObjectId } = require("mongodb");
 const verifyFBToken = require("../middleware/verifyFBToken");
+const { createNotification } = require("../utils/createNotification");
 
 const trackingCollection = () => getDB().collection("tracking");
 
@@ -151,6 +152,18 @@ router.post("/save-payment", verifyFBToken, async (req, res) => {
       location: null,
       createdAt: new Date().toISOString(),
       createdBy: req.user.email,
+    });
+
+    // create notification message
+    await createNotification({
+      recipientUid: req.user.uid,
+      recipientEmail: req.user.email,
+      type: "payment",
+      event: "payment_completed",
+      title: "Payment Completed",
+      message: `Payment for parcel ${parcel.trackingId} has been completed successfully.`,
+      parcelId: parcel._id,
+      trackingId: parcel.trackingId,
     });
 
     res.status(201).send({
