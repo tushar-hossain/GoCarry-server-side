@@ -12,16 +12,16 @@ let db;
 
 const connectDB = async () => {
   try {
-    await client.connect();
+    // await client.connect();
 
     db = client.db(process.env.DB_NAME);
 
     // Ping MongoDB
-    await db.command({ ping: 1 });
+    // await db.command({ ping: 1 });
 
-    console.log("MongoDB connected successfully");
+    // console.log("MongoDB connected successfully");
   } catch (error) {
-    console.error("MongoDB connection failed:", error);
+    // console.error("MongoDB connection failed:", error);
     process.exit(1);
   }
 };
