@@ -142,6 +142,89 @@ router.post("/", verifyFBToken, async (req, res) => {
   }
 });
 
+// update single parcels
+router.patch("/:id", verifyFBToken, async (req, res) => {
+  try {
+    const { id } = req.params;
+    const userEmail = req.user.email;
+
+    if (!ObjectId.isValid(id)) {
+      return res.status(400).send({
+        success: false,
+        message: "Invalid parcel ID",
+      });
+    }
+
+    const {
+      parcelType,
+      parcelName,
+      parcelWeight,
+      senderName,
+      senderPhone,
+      senderDistrict,
+      senderServiceCenter,
+      senderAddress,
+      pickupInstruction,
+      receiverName,
+      receiverPhone,
+      receiverDistrict,
+      receiverServiceCenter,
+      receiverAddress,
+      deliveryInstruction,
+      deliveryCost,
+    } = req.body;
+
+    const result = await parcelCollection().updateOne(
+      {
+        _id: new ObjectId(id),
+        created_by: userEmail,
+        delivery_Status: "not_collected",
+      },
+      {
+        $set: {
+          parcelType,
+          parcelName,
+          parcelWeight,
+          senderName,
+          senderPhone,
+          senderDistrict,
+          senderServiceCenter,
+          senderAddress,
+          pickupInstruction,
+          receiverName,
+          receiverPhone,
+          receiverDistrict,
+          receiverServiceCenter,
+          receiverAddress,
+          deliveryInstruction,
+          deliveryCost,
+          updatedAt: new Date().toISOString(),
+        },
+      },
+    );
+
+    if (result.matchedCount === 0) {
+      return res.status(404).send({
+        success: false,
+        message: "Parcel not found",
+      });
+    }
+
+    res.status(200).send({
+      success: true,
+      message: "Parcel updated successfully",
+    });
+  } catch (error) {
+    console.error("Update parcel error:", error);
+
+    res.status(500).send({
+      success: false,
+      message: "Failed to update parcel",
+      error: error.message,
+    });
+  }
+});
+
 // DELETE parcel
 router.delete("/:id", verifyFBToken, async (req, res) => {
   try {
