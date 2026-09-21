@@ -17,10 +17,6 @@ const PORT = process.env.PORT || 5000;
 app.use(cors());
 app.use(express.json());
 
-app.get("/", (req, res) => {
-  res.send("GoCarry server is running");
-});
-
 // Routes
 app.use("/parcels", parcelRoutes);
 app.use("/payments", paymentRoutes);
@@ -30,6 +26,12 @@ app.use("/riders", userRiders);
 app.use("/admin", adminRoutes);
 app.use("/dashboard", dashboardRoutes);
 app.use("/notifications", notificationRoutes);
+
+app.get("/", (req, res) => {
+  res.send("GoCarry server is running");
+});
+
+app.get("/favicon.ico", (req, res) => res.status(204).end());
 
 const startServer = async () => {
   try {
