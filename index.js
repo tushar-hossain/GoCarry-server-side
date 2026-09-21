@@ -2,6 +2,7 @@ require("dotenv").config();
 const express = require("express");
 const cors = require("cors");
 const { connectDB } = require("./src/config/db");
+const app = express();
 const parcelRoutes = require("./src/routes/parcel.routes");
 const paymentRoutes = require("./src/routes/payment.routes");
 const trackingRoutes = require("./src/routes/tracking.routes");
@@ -11,7 +12,6 @@ const adminRoutes = require("./src/routes/admin.routes");
 const dashboardRoutes = require("./src/routes/dashboard.routes");
 const notificationRoutes = require("./src/routes/notification.routes");
 
-const app = express();
 const PORT = process.env.PORT || 5000;
 
 app.use(cors());
@@ -37,9 +37,9 @@ const startServer = async () => {
   try {
     await connectDB();
 
-    app.listen(PORT, () => {
-      console.log(`Server running on http://localhost:${PORT}`);
-    });
+    // app.listen(PORT, () => {
+    //   console.log(`Server running on http://localhost:${PORT}`);
+    // });
   } catch (error) {
     console.error("Server startup failed:", error);
   }
