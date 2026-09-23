@@ -10,7 +10,7 @@ const warehousesCollection = () => {
 };
 
 // GET all active warehouses
-router.get("/", verifyFBToken, async (req, res) => {
+router.get("/", async (req, res) => {
   try {
     const warehouses = await warehousesCollection()
       .find({})
