@@ -12,6 +12,7 @@ const adminRoutes = require("./src/routes/admin.routes");
 const dashboardRoutes = require("./src/routes/dashboard.routes");
 const notificationRoutes = require("./src/routes/notification.routes");
 const warehouseRoutes = require("./src/routes/warehouse.routes");
+const passwordResetRoutes = require("./src/routes/passwordReset.routes");
 
 const PORT = process.env.PORT || 5000;
 
@@ -28,6 +29,7 @@ app.use("/admin", adminRoutes);
 app.use("/dashboard", dashboardRoutes);
 app.use("/notifications", notificationRoutes);
 app.use("/warehouses", warehouseRoutes);
+app.use("/auth", passwordResetRoutes);
 
 app.get("/", (req, res) => {
   res.send("GoCarry server is running");
