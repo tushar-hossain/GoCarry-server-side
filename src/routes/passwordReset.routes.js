@@ -75,6 +75,7 @@ router.post("/forgot-password", async (req, res) => {
     return res.send({
       success: true,
       message: "OTP sent successfully.",
+      expiresAt: expiresAt.getTime(),
     });
   } catch (error) {
     console.error("Forgot password error:", error);
